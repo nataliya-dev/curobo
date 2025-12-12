@@ -57,4 +57,12 @@ If you found this work useful, please cite the below report,
       archivePrefix={arXiv},
       primaryClass={cs.RO}
 }
+
 ```
+
+
+## Note helpful git commands
+
+- Push/pull from your fork with git push origin / git pull origin
+- Fetch updates from the original repo with git fetch upstream
+- Merge upstream changes with git merge upstream/main
