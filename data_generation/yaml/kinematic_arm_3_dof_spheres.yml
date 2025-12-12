@@ -1,0 +1,91 @@
+collision_spheres:
+  finger_1_sphere_1:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_1_sphere_2:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_1_sphere_3:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_1_sphere_4:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_1_sphere_5:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_2_sphere_1:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_2_sphere_2:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_2_sphere_3:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_2_sphere_4:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_2_sphere_5:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_3_sphere_1:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_3_sphere_2:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_3_sphere_3:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_3_sphere_4:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03
+  finger_3_sphere_5:
+  - center:
+    - 0.0
+    - 0.0
+    - 0.0
+    radius: 0.03

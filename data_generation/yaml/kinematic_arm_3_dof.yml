@@ -1,0 +1,95 @@
+##
+## Configuration for 3DOF Kinematic Arm
+##
+
+robot_cfg:
+  kinematics:
+    # USD settings (not used for this simple robot)
+    use_usd_kinematics: False
+    usd_path: ""
+    usd_robot_root: "/robot"
+    isaac_usd_path: ""
+    usd_flip_joints: {}
+    usd_flip_joint_limits: []
+
+    # URDF settings
+    urdf_path: "kinematic_arm_3dof.urdf"
+    asset_root_path: ""
+
+    # Link configuration
+    base_link: "base"
+    ee_link: "finger_3_sphere_5"
+
+    # Collision checking links
+    collision_link_names:
+      [
+        "finger_1_sphere_1",
+        "finger_1_sphere_2",
+        "finger_1_sphere_3",
+        "finger_1_sphere_4",
+        "finger_1_sphere_5",
+        "finger_2_sphere_1",
+        "finger_2_sphere_2",
+        "finger_2_sphere_3",
+        "finger_2_sphere_4",
+        "finger_2_sphere_5",
+        "finger_3_sphere_1",
+        "finger_3_sphere_2",
+        "finger_3_sphere_3",
+        "finger_3_sphere_4",
+        "finger_3_sphere_5"
+      ]
+
+
+    # Collision spheres
+    collision_spheres: "/home/nataliya/curobo/data_generation/yaml/kinematic_arm_3_dof_spheres.yml"
+    collision_sphere_buffer: 0.01
+    extra_collision_spheres: {}
+    use_global_cumul: True
+
+    # Self-collision settings
+    self_collision_ignore:
+      {
+        "base": ["finger_1_sphere_1"],
+        "finger_1_sphere_1": ["base", "finger_1_sphere_2"],
+        "finger_1_sphere_2": ["finger_1_sphere_1", "finger_1_sphere_3"],
+        "finger_1_sphere_3": ["finger_1_sphere_2", "finger_1_sphere_4"],
+        "finger_1_sphere_4": ["finger_1_sphere_3", "finger_1_sphere_5"],
+        "finger_1_sphere_5": ["finger_1_sphere_4", "finger_2_sphere_1"],
+        "finger_2_sphere_1": ["finger_1_sphere_5", "finger_2_sphere_2"],
+        "finger_2_sphere_2": ["finger_2_sphere_1", "finger_2_sphere_3"],
+        "finger_2_sphere_3": ["finger_2_sphere_2", "finger_2_sphere_4"],
+        "finger_2_sphere_4": ["finger_2_sphere_3", "finger_2_sphere_5"],
+        "finger_2_sphere_5": ["finger_2_sphere_4", "finger_3_sphere_1"],
+        "finger_3_sphere_1": ["finger_2_sphere_5", "finger_3_sphere_2"],
+        "finger_3_sphere_2": ["finger_3_sphere_1", "finger_3_sphere_3"],
+        "finger_3_sphere_3": ["finger_3_sphere_2", "finger_3_sphere_4"],
+        "finger_3_sphere_4": ["finger_3_sphere_3", "finger_3_sphere_5"],
+        "finger_3_sphere_5": ["finger_3_sphere_4"]
+      }
+
+
+    self_collision_buffer:
+      {
+        "base_link": 0.0,
+        "link1": 0.0,
+        "link2": 0.0,
+        "link3": 0.0,
+      }
+
+    # Mesh links for visualization
+    mesh_link_names: null
+
+    # No locked joints
+    lock_joints: null
+    extra_links: null
+    external_asset_path: null
+
+    # Configuration space
+    cspace:
+      joint_names: ["theta_1", "theta_2", "theta_3"]
+      retract_config: [0.0, 0.0, 0.0]
+      null_space_weight: [1.0, 1.0, 1.0]
+      cspace_distance_weight: [1.0, 1.0, 1.0]
+      max_acceleration: 10.0
+      max_jerk: 300.0

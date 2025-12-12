@@ -62,7 +62,7 @@ If you found this work useful, please cite the below report,
 
 
 ## Note helpful git commands
-
+- git push origin main
 - Push/pull from your fork with git push origin / git pull origin
 - Fetch updates from the original repo with git fetch upstream
 - Merge upstream changes with git merge upstream/main

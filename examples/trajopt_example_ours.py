@@ -87,6 +87,7 @@ def demo_trajopt_collision_free():
     )
     trajopt_solver = TrajOptSolver(trajopt_config)
     q_start = trajopt_solver.retract_config
+    print(q_start)  # need to update this
 
     q_goal = q_start.clone() + 0.1
     # q_goal[...,-1] -=0.2
