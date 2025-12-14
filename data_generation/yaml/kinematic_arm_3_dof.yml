@@ -13,11 +13,11 @@ robot_cfg:
     usd_flip_joint_limits: []
 
     # URDF settings
-    urdf_path: "kinematic_arm_3dof.urdf"
+    urdf_path: "/home/nataliya/sim_learning/rodrigues_network/src/urdfs/kinematic_arm_3_dof.urdf"
     asset_root_path: ""
 
     # Link configuration
-    base_link: "base"
+    base_link: "world"
     ee_link: "finger_3_sphere_5"
 
     # Collision checking links

@@ -16,6 +16,14 @@ from curobo.cuda_robot_model.cuda_robot_model import CudaRobotModel
 from curobo.rollout.rollout_base import Goal
 from curobo.util_file import load_yaml
 from curobo.geom.types import WorldConfig
+from curobo.geom.sdf.world import CollisionQueryBuffer
+
+# plotting
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from mpl_toolkits.mplot3d import Axes3D
+import torch
 
 
 class DatasetGenerator:
@@ -26,7 +34,7 @@ class DatasetGenerator:
         robot_config_file: str,
         urdf_file: str,
         num_obstacles: int = 3,
-        trajectory_length: int = 50,
+        trajectory_length: int = 10,
         device: str = "cuda:0"
     ):
         """
@@ -44,6 +52,9 @@ class DatasetGenerator:
         self.trajectory_length = trajectory_length
         self.tensor_args = TensorDeviceType(device=device)
 
+        self._collision_weight = self.tensor_args.to_device([1.0])
+        self._collision_activation_distance = self.tensor_args.to_device([0.02])
+
         # Load robot configuration
         print(f"Loading robot config from: {robot_config_file}")
         self.robot_cfg = self._load_robot_config(robot_config_file, urdf_file)
@@ -52,7 +63,7 @@ class DatasetGenerator:
 
         # Create world with random obstacles
         print(f"Creating world with {num_obstacles} random obstacles")
-        self.world_file = self._create_random_world()
+        self.world_cfg_dict = self._create_random_world()
 
         # Initialize TrajOpt solver
         print(f"Initializing TrajOpt solver")
@@ -64,6 +75,16 @@ class DatasetGenerator:
         print(f"Joint limits:")
         for i, (lower, upper) in enumerate(self.joint_limits):
             print(f"Joint {i}: [{lower:.2f}, {upper:.2f}]")
+
+        sample_q = torch.zeros(1, self.trajopt_solver.dof, device=self.tensor_args.device)
+        sample_kin = self.trajopt_solver.fk(sample_q)
+        sphere_shape = sample_kin.link_spheres_tensor.unsqueeze(1).shape  # [1, 1, n_spheres, 4]
+
+        self._collision_query_buffer = CollisionQueryBuffer.initialize_from_shape(
+            sphere_shape,
+            self.tensor_args,
+            self.trajopt_solver.world_coll_checker.collision_types
+        )
 
     def _load_robot_config(self, config_file: str, urdf_file: str) -> RobotConfig:
         """Load robot configuration from YAML file."""
@@ -81,10 +102,11 @@ class DatasetGenerator:
         spheres_dict = {}
 
         # Define workspace bounds
-        x_range = (-0.5, 0.5)
-        y_range = (-0.5, 0.5)
-        z_range = (0.1, 0.8)
-        radius_range = (0.05, 0.15)
+        # TODO(nn) need to come from some config
+        x_range = (-0.7, 0.7)
+        y_range = (-0.7, 0.7)
+        z_range = (0.0, 0.0)
+        radius_range = (0.05, 0.02)
 
         for i in range(self.num_obstacles):
             x = np.random.uniform(*x_range)
@@ -100,37 +122,38 @@ class DatasetGenerator:
 
         # Create world config in proper format
         world_cfg_dict = {
-
             "sphere": spheres_dict
-
         }
 
-        # Save to YAML file with proper formatting
-        world_file_path = "random_world.yml"
-        with open(world_file_path, 'w') as f:
-            yaml.dump(world_cfg_dict, f, default_flow_style=False, sort_keys=False)
-
-        return world_file_path
+        return world_cfg_dict
 
     def _initialize_trajopt(self) -> TrajOptSolver:
         """Initialize the trajectory optimization solver."""
 
-        # Load world config from YAML file
-        self.world_cfg = WorldConfig.from_dict(load_yaml(self.world_file))
+        # Load world config from dictionary
+        self.world_cfg = WorldConfig.from_dict(self.world_cfg_dict)
 
+        # Create mesh world representation
         self.world_cfg = WorldConfig.create_mesh_world(self.world_cfg)
 
         # Verify obstacles are loaded
-        if hasattr(self.world_cfg, 'sphere') and self.world_cfg.sphere is not None:
-            print(f"  ✓ Loaded {len(self.world_cfg.sphere)} sphere obstacles")
-        else:
-            print("  ✗ WARNING: No obstacles loaded!")
+        # print(f"Loaded {len(self.world_cfg.mesh)} mesh obstacles")
+        print(f"Loaded {len(self.world_cfg.mesh)} mesh obstacles")
 
         trajopt_config = TrajOptSolverConfig.load_from_robot_config(
             self.robot_cfg,
-            self.world_cfg,  # Now this is stored as self.world_cfg
+            self.world_cfg,
             self.tensor_args,
-            use_cuda_graph=False,
+            use_cuda_graph=True,
+            traj_tsteps=self.trajectory_length,
+
+
+            num_seeds=4,  # Increase from default 2 to 4-8
+            seed_ratio={"linear": 0.2, "bias": 0.8, "start": 0.0, "goal": 0.0},  # Add bias seeds!
+            grad_trajopt_iters=150,  # Increase L-BFGS iterations (default ~100)
+            collision_activation_distance=self._collision_activation_distance,  # Add safety buffer around obstacles
+            trajopt_dt=0.25,  # Increase dt for more flexible timing
+
         )
         return TrajOptSolver(trajopt_config)
 
@@ -140,37 +163,36 @@ class DatasetGenerator:
         kin_cfg = self.robot_cfg.kinematics
 
         for i in range(len(kin_cfg.kinematics_config.joint_names)):
-            lower = -3.0  # kin_cfg.kinematics_config.joint_limits.position[0, i].item()
-            upper = 3.0  # kin_cfg.kinematics_config.joint_limits.position[1, i].item()
+            lower = -3.14  # kin_cfg.kinematics_config.joint_limits.position[0, i].item()
+            upper = 3.14  # kin_cfg.kinematics_config.joint_limits.position[1, i].item()
             limits.append((lower, upper))
 
         return limits
 
     def sample_collision_free_config(self, max_attempts: int = 100) -> torch.Tensor:
-        """
-        Sample a random collision-free configuration.
-
-        Args:
-            max_attempts: Maximum number of sampling attempts
-
-        Returns:
-            Collision-free joint configuration as tensor
-        """
         for attempt in range(max_attempts):
-            # Sample random configuration within joint limits
+            # Sample random configuration
             q = torch.zeros(len(self.joint_limits), device=self.tensor_args.device)
             for i, (lower, upper) in enumerate(self.joint_limits):
                 q[i] = torch.rand(1, device=self.tensor_args.device) * (upper - lower) + lower
 
-            # Check for collisions
-            q_batch = q.unsqueeze(0)  # Add batch dimension
+            q_batch = q.unsqueeze(0)  # [1, DOF]
 
-            # Use the kinematics model to check collision
+            # Get forward kinematics
             kin_state = self.trajopt_solver.fk(q_batch)
+            sphere_tensor = kin_state.link_spheres_tensor.unsqueeze(1)  # [1, 1, n_spheres, 4]
 
-            # For now, we'll just return the sampled config
-            # More sophisticated collision checking can be added
-            return q
+            # Check collision
+            collision_result = self.trajopt_solver.world_coll_checker.get_sphere_collision(
+                sphere_tensor,
+                self._collision_query_buffer,
+                self._collision_weight,
+                self._collision_activation_distance,
+            )
+
+            # If no collision detected, return this configuration
+            if not collision_result.any():
+                return q
 
         raise RuntimeError(f"Failed to sample collision-free config after {max_attempts} attempts")
 
@@ -178,7 +200,6 @@ class DatasetGenerator:
         self,
         q_start: torch.Tensor,
         q_goal: torch.Tensor,
-        verbose: bool = True
     ) -> Dict:
         """
         Generate a collision-free trajectory from start to goal.
@@ -186,17 +207,12 @@ class DatasetGenerator:
         Args:
             q_start: Start joint configuration
             q_goal: Goal joint configuration
-            verbose: Whether to print detailed information
 
         Returns:
             Dictionary containing trajectory and metadata
         """
-        if verbose:
-            print("\n" + "-" * 60)
-            print("GENERATING TRAJECTORY")
-            print("-" * 60)
-            print(f"Start config: {q_start.cpu().numpy()}")
-            print(f"Goal config:  {q_goal.cpu().numpy()}")
+        print(f"Start config: {q_start.cpu().numpy()}")
+        print(f"Goal config:  {q_goal.cpu().numpy()}")
 
         # Create start and goal states
         current_state = JointState.from_position(q_start.unsqueeze(0))
@@ -211,128 +227,49 @@ class DatasetGenerator:
         result = self.trajopt_solver.solve_single(js_goal)
         solve_time = time.time() - start_time
 
-        if verbose:
-            print(f"\nTrajOpt Results:")
-            print(f"  Success: {result.success.item()}")
-            print(f"  Solve time: {solve_time:.4f}s")
-            print(f"  Original trajectory length: {result.solution.position.shape[0]}")
+        print(f"\nTrajOpt Results:")
+        print(f"  Success: {result.success.item()}")
+        print(f"  Solve time: {solve_time:.4f}s")
+        print(f"  Original trajectory length: {result.solution.position.shape[0]}")
 
         if not result.success:
-            if verbose:
-                print("  ✗ Trajectory generation FAILED")
+            print("Trajectory generation FAILED")
             return None
-
-        # Resample trajectory to fixed length
-        resampled_traj = self._resample_trajectory(result.solution)
-
-        if verbose:
-            print(f"  Resampled trajectory length: {resampled_traj['position'].shape[0]}")
-            print("  ✓ Trajectory generation SUCCESS")
-            print("-" * 60 + "\n")
 
         return {
             'start': q_start.cpu().numpy(),
             'goal': q_goal.cpu().numpy(),
-            'position': resampled_traj['position'],
-            'velocity': resampled_traj['velocity'],
-            'acceleration': resampled_traj['acceleration'],
+            'position': result.solution.position.squeeze(1).cpu().numpy(),  # [T, DOF]
+            'velocity': result.solution.velocity.squeeze(1).cpu().numpy() if result.solution.velocity is not None else None,
+            'acceleration': result.solution.acceleration.squeeze(1).cpu().numpy() if result.solution.acceleration is not None else None,
             'success': True,
             'solve_time': solve_time,
-            'original_length': result.solution.position.shape[0]
-        }
-
-    def _resample_trajectory(self, trajectory: JointState) -> Dict:
-        """
-        Resample trajectory to fixed number of states using linear interpolation.
-
-        Args:
-            trajectory: Original trajectory from TrajOpt
-
-        Returns:
-            Dictionary with resampled position, velocity, acceleration
-        """
-        original_length = trajectory.position.shape[0]
-
-        # Create interpolation indices
-        original_indices = torch.linspace(0, original_length - 1, original_length)
-        target_indices = torch.linspace(0, original_length - 1, self.trajectory_length)
-
-        # Resample position
-        position = trajectory.position.squeeze(1).cpu()  # [T, DOF]
-        resampled_position = torch.zeros(self.trajectory_length, position.shape[1])
-
-        for i in range(position.shape[1]):
-            resampled_position[:, i] = torch.tensor(
-                np.interp(
-                    target_indices.numpy(),
-                    original_indices.numpy(),
-                    position[:, i].numpy()
-                )
-            )
-
-        # Resample velocity
-        velocity = trajectory.velocity.squeeze(
-            1).cpu() if trajectory.velocity is not None else torch.zeros_like(position)
-        resampled_velocity = torch.zeros(self.trajectory_length, velocity.shape[1])
-
-        for i in range(velocity.shape[1]):
-            resampled_velocity[:, i] = torch.tensor(
-                np.interp(
-                    target_indices.numpy(),
-                    original_indices.numpy(),
-                    velocity[:, i].numpy()
-                )
-            )
-
-        # Resample acceleration
-        acceleration = trajectory.acceleration.squeeze(
-            1).cpu() if trajectory.acceleration is not None else torch.zeros_like(position)
-        resampled_acceleration = torch.zeros(self.trajectory_length, acceleration.shape[1])
-
-        for i in range(acceleration.shape[1]):
-            resampled_acceleration[:, i] = torch.tensor(
-                np.interp(
-                    target_indices.numpy(),
-                    original_indices.numpy(),
-                    acceleration[:, i].numpy()
-                )
-            )
-
-        return {
-            'position': resampled_position.numpy(),
-            'velocity': resampled_velocity.numpy(),
-            'acceleration': resampled_acceleration.numpy()
         }
 
     def generate_single_example(self, example_id: int = 0) -> Dict:
-        """
-        Generate a single trajectory example.
-
-        Args:
-            example_id: ID for this example
-
-        Returns:
-            Dictionary containing full trajectory data
-        """
-        print(f"\n{'='*60}")
-        print(f"GENERATING EXAMPLE {example_id}")
-        print(f"{'='*60}")
 
         # Sample collision-free start and goal
         print("Sampling collision-free start configuration...")
+        start = time.time()
         q_start = self.sample_collision_free_config()
+        print(f"Sampling time: {time.time() - start:.4f}s")
         print(f"Start: {q_start.cpu().numpy()}")
 
         print("Sampling collision-free goal configuration...")
+        start = time.time()
         q_goal = self.sample_collision_free_config()
+        print(f"Sampling time: {time.time() - start:.4f}s")
         print(f"Goal: {q_goal.cpu().numpy()}")
 
         # Generate trajectory
         print("Generating collision-free trajectory...")
+        start = time.time()
         trajectory_data = self.generate_trajectory(q_start, q_goal)
+        print(f"Generation time: {time.time() - start:.4f}s")
 
         if trajectory_data is None:
             print("FAILED to generate trajectory")
+            visualize_start_goal_only(self, q_start, q_goal)
             return None
 
         # Add metadata
@@ -340,68 +277,195 @@ class DatasetGenerator:
         trajectory_data['num_obstacles'] = self.num_obstacles
         trajectory_data['obstacles'] = [
             {
-                'name': sphere.name,
-                'position': sphere.pose[:3],
-                'radius': sphere.radius
+                'name': mesh.name,
+                'position': mesh.pose[:3],
+                'radius': self._estimate_mesh_radius(mesh)
             }
-            for sphere in self.world_cfg.sphere
+            for mesh in self.world_cfg.mesh
         ]
 
-        print(f"\n{'='*60}")
-        print(f"EXAMPLE {example_id} COMPLETE")
-        print(f"{'='*60}\n")
+        print(trajectory_data['obstacles'])
 
         return trajectory_data
 
+    def _estimate_mesh_radius(self, mesh):
+        """Estimate sphere radius from mesh bounds."""
+        trimesh_obj = mesh.get_trimesh_mesh()
+        bounds = trimesh_obj.bounds  # [[min_x, min_y, min_z], [max_x, max_y, max_z]]
+        # Use half of the maximum extent as radius estimate
+        extents = bounds[1] - bounds[0]
+        return max(extents) / 2.0
+
+
+def visualize_trajectory_simple(generator, trajectory_data, n_frames=5):
+    """
+    Visualize every n-th frame of trajectory on the same plot.
+
+    Args:
+        generator: DatasetGenerator instance
+        trajectory_data: Dictionary containing trajectory data
+        n_frames: Show every n-th frame (default: 5)
+    """
+    positions = trajectory_data['position']
+    obstacles = trajectory_data['obstacles']
+
+    # Select frame indices to visualize
+    frame_indices = range(0, len(positions), n_frames)
+
+    # Create colormap for trajectory progression
+    colors = plt.cm.viridis(np.linspace(0, 1, len(frame_indices)))
+
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot obstacles once (they don't move)
+    print(f"Plotting {len(obstacles)} obstacles")
+    for obs in obstacles:
+        u = np.linspace(0, 2 * np.pi, 20)
+        v = np.linspace(0, np.pi, 20)
+        x = obs['radius'] * np.outer(np.cos(u), np.sin(v)) + obs['position'][0]
+        y = obs['radius'] * np.outer(np.sin(u), np.sin(v)) + obs['position'][1]
+        z = obs['radius'] * np.outer(np.ones(np.size(u)), np.cos(v)) + obs['position'][2]
+        ax.plot_surface(x, y, z, color='red', alpha=0.3)
+
+    # Plot robot states for each selected frame
+    for idx, frame in enumerate(frame_indices):
+        # Get joint configuration
+        q = torch.tensor(positions[frame], device=generator.tensor_args.device).unsqueeze(0)
+
+        # Get robot spheres
+        robot_spheres = generator.trajopt_solver.kinematics.get_robot_as_spheres(q)[0]
+
+        # Plot robot spheres
+        for sph in robot_spheres:
+            if sph.radius > 0:
+                u = np.linspace(0, 2 * np.pi, 5)
+                v = np.linspace(0, np.pi, 5)
+                x = sph.radius * np.outer(np.cos(u), np.sin(v)) + sph.pose[0]
+                y = sph.radius * np.outer(np.sin(u), np.sin(v)) + sph.pose[1]
+                z = sph.radius * np.outer(np.ones(np.size(u)), np.cos(v)) + sph.pose[2]
+                ax.plot_surface(x, y, z, color=colors[idx], alpha=0.4)
+
+        # Get link poses
+        state = generator.trajopt_solver.kinematics.get_state(q)
+
+        # Plot link positions as points
+        if state.links_position is not None:
+            link_pos = state.links_position[0].cpu().numpy()
+            ax.scatter(link_pos[:, 0], link_pos[:, 1], link_pos[:, 2],
+                       c=[colors[idx]], s=100, marker='o',
+                       label=f'Frame {frame}')
+
+    ax.set_xlim([-1, 1])
+    ax.set_ylim([-1, 1])
+    ax.set_zlim([-1, 1])
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title(f'Trajectory Visualization (every {n_frames} frames)')
+    ax.legend()
+
+    ax.view_init(elev=90, azim=-90)  # Top-down view of X-Y plane
+
+    plt.tight_layout()
+    plt.show()
+
+
+def visualize_start_goal_only(generator, q_start, q_goal):
+    """
+    Visualize just the start and goal configurations with obstacles.
+
+    Args:
+        generator: DatasetGenerator instance
+        q_start: Start joint configuration (torch.Tensor)
+        q_goal: Goal joint configuration (torch.Tensor)
+    """
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot obstacles
+    for mesh in generator.world_cfg.mesh:
+        trimesh_obj = mesh.get_trimesh_mesh()
+        bounds = trimesh_obj.bounds
+        center = mesh.pose[:3]
+        radius = max(bounds[1] - bounds[0]) / 2.0
+
+        u = np.linspace(0, 2 * np.pi, 20)
+        v = np.linspace(0, np.pi, 20)
+        x = radius * np.outer(np.cos(u), np.sin(v)) + center[0]
+        y = radius * np.outer(np.sin(u), np.sin(v)) + center[1]
+        z = radius * np.outer(np.ones(np.size(u)), np.cos(v)) + center[2]
+        ax.plot_surface(x, y, z, color='red', alpha=0.3)
+
+    # Plot start configuration (green)
+    q_start_batch = q_start.unsqueeze(0)
+    start_spheres = generator.trajopt_solver.kinematics.get_robot_as_spheres(q_start_batch)[0]
+    for sph in start_spheres:
+        if sph.radius > 0:
+            u = np.linspace(0, 2 * np.pi, 10)
+            v = np.linspace(0, np.pi, 10)
+            x = sph.radius * np.outer(np.cos(u), np.sin(v)) + sph.pose[0]
+            y = sph.radius * np.outer(np.sin(u), np.sin(v)) + sph.pose[1]
+            z = sph.radius * np.outer(np.ones(np.size(u)), np.cos(v)) + sph.pose[2]
+            ax.plot_surface(x, y, z, color='green', alpha=0.6)
+
+    # Plot goal configuration (blue)
+    q_goal_batch = q_goal.unsqueeze(0)
+    goal_spheres = generator.trajopt_solver.kinematics.get_robot_as_spheres(q_goal_batch)[0]
+    for sph in goal_spheres:
+        if sph.radius > 0:
+            u = np.linspace(0, 2 * np.pi, 10)
+            v = np.linspace(0, np.pi, 10)
+            x = sph.radius * np.outer(np.cos(u), np.sin(v)) + sph.pose[0]
+            y = sph.radius * np.outer(np.sin(u), np.sin(v)) + sph.pose[1]
+            z = sph.radius * np.outer(np.ones(np.size(u)), np.cos(v)) + sph.pose[2]
+            ax.plot_surface(x, y, z, color='blue', alpha=0.6)
+
+    ax.set_xlim([-1, 1])
+    ax.set_ylim([-1, 1])
+    ax.set_zlim([-1, 1])
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('Start (Green) and Goal (Blue) Configurations')
+    ax.view_init(elev=90, azim=-90)
+    plt.tight_layout()
+    plt.show()
+
 
 def main():
-    """Main function to test the dataset generator."""
-
-    print("\n" + "#" * 60)
-    print("# COLLISION-FREE MOTION PLANNING DATASET GENERATOR")
-    print("#" * 60 + "\n")
-
     # Configuration
     robot_config_file = "/home/nataliya/curobo/data_generation/yaml/kinematic_arm_3_dof.yml"
     urdf_file = "/home/nataliya/sim_learning/rodrigues_network/src/urdfs/kinematic_arm_3_dof.urdf"
-    num_obstacles = 3
+    num_obstacles = 2
     trajectory_length = 50
 
-    # Initialize generator
-    try:
-        generator = DatasetGenerator(
-            robot_config_file=robot_config_file,
-            urdf_file=urdf_file,
-            num_obstacles=num_obstacles,
-            trajectory_length=trajectory_length,
-            device="cuda:0" if torch.cuda.is_available() else "cpu"
-        )
-    except Exception as e:
-        print(f"\n✗ ERROR during initialization: {e}")
-        import traceback
-        traceback.print_exc()
-        return
+    generator = DatasetGenerator(
+        robot_config_file=robot_config_file,
+        urdf_file=urdf_file,
+        num_obstacles=num_obstacles,
+        trajectory_length=trajectory_length,
+        device="cuda:0" if torch.cuda.is_available() else "cpu"
+    )
 
-    # Generate a single example
-    try:
-        example = generator.generate_single_example(example_id=0)
+    example = generator.generate_single_example(example_id=0)
 
-        if example is not None:
-            print("\n" + "#" * 60)
-            print("# EXAMPLE SUCCESSFULLY GENERATED")
-            print("#" * 60)
-            print(f"\nTrajectory shape: {example['position'].shape}")
-            print(f"Start config: {example['start']}")
-            print(f"Goal config: {example['goal']}")
-            print(f"Solve time: {example['solve_time']:.4f}s")
-            print(f"Number of obstacles: {example['num_obstacles']}")
-        else:
-            print("\n✗ Failed to generate example")
+    if example is not None:
+        print(f"Trajectory shape: {example['position'].shape}")
+        print(f"Start config: {example['start']}")
+        print(f"Goal config: {example['goal']}")
+        print(f"Solve time: {example['solve_time']:.4f}s")
+        print(f"Number of obstacles: {example['num_obstacles']}")
 
-    except Exception as e:
-        print(f"\n✗ ERROR during example generation: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"\nTrajectory shape: {example['position'].shape}")
+        print(f"Start config: {example['start']}")
+        print(f"Goal config: {example['goal']}")
+        print(f"Solve time: {example['solve_time']:.4f}s")
+        print(f"Number of obstacles: {example['num_obstacles']}")
+        visualize_trajectory_simple(generator, example)
+
+    else:
+        print("Failed to generate example")
 
 
 if __name__ == "__main__":
