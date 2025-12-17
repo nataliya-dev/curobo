@@ -1,0 +1,486 @@
+{
+  "general": {
+    "device": {
+      "default": "cuda:0",
+      "value": "cuda:0"
+    },
+    "robot_config_file": {
+      "default": null,
+      "value": "/home/nataliya/curobo/data_generation/yaml/kinematic_arm_3_dof.yml"
+    },
+    "output_directory": {
+      "default": "./data",
+      "value": "./data"
+    }
+  },
+  "generation": {
+    "num_trajectories": {
+      "default": 1,
+      "value": 10
+    },
+    "max_attempts_per_trajectory": {
+      "default": 5,
+      "value": 5
+    },
+    "regenerate_obstacles_on_failure": {
+      "default": true,
+      "value": true
+    },
+    "save_images": {
+      "default": true,
+      "value": true
+    },
+    "save_start_goal_images": {
+      "default": true,
+      "value": true
+    },
+    "save_trajectory_images": {
+      "default": true,
+      "value": true
+    }
+  },
+  "obstacles": {
+    "num_obstacles_min": {
+      "default": 0,
+      "value": 0
+    },
+    "num_obstacles_max": {
+      "default": 5,
+      "value": 5
+    },
+    "radius_min": {
+      "default": 0.05,
+      "value": 0.05
+    },
+    "radius_max": {
+      "default": 0.15,
+      "value": 0.05
+    },
+    "x_range": {
+      "default": [-1.0, 1.0],
+      "value": [-0.5, 0.5]
+    },
+    "y_range": {
+      "default": [-1.0, 1.0],
+      "value": [-0.5, 0.5]
+    },
+    "z_range": {
+      "default": [0.0, 1.0],
+      "value": [0.0, 0.0]
+    }
+  },
+  "motion_gen_config": {
+    "num_ik_seeds": {
+      "default": 32,
+      "value": 32
+    },
+    "num_graph_seeds": {
+      "default": 4,
+      "value": 8
+    },
+    "num_trajopt_seeds": {
+      "default": 4,
+      "value": 12
+    },
+    "num_batch_ik_seeds": {
+      "default": 32,
+      "value": 32
+    },
+    "num_batch_trajopt_seeds": {
+      "default": 1,
+      "value": 1
+    },
+    "num_trajopt_noisy_seeds": {
+      "default": 1,
+      "value": 1
+    },
+    "position_threshold": {
+      "default": 0.005,
+      "value": 0.005
+    },
+    "rotation_threshold": {
+      "default": 0.05,
+      "value": 0.05
+    },
+    "cspace_threshold": {
+      "default": 0.05,
+      "value": 0.05
+    },
+    "base_cfg_file": {
+      "default": "base_cfg.yml",
+      "value": null
+    },
+    "particle_ik_file": {
+      "default": "particle_ik.yml",
+      "value": null
+    },
+    "gradient_ik_file": {
+      "default": "gradient_ik_autotune.yml",
+      "value": null
+    },
+    "graph_file": {
+      "default": "graph.yml",
+      "value": null
+    },
+    "particle_trajopt_file": {
+      "default": "particle_trajopt.yml",
+      "value": null
+    },
+    "gradient_trajopt_file": {
+      "default": "gradient_trajopt.yml",
+      "value": null
+    },
+    "finetune_trajopt_file": {
+      "default": null,
+      "value": null
+    },
+    "trajopt_tsteps": {
+      "default": 32,
+      "value": 50
+    },
+    "interpolation_steps": {
+      "default": 5000,
+      "value": 200
+    },
+    "interpolation_dt": {
+      "default": 0.02,
+      "value": 0.05
+    },
+    "interpolation_type": {
+      "default": "LINEAR_CUDA",
+      "value": null
+    },
+    "use_cuda_graph": {
+      "default": true,
+      "value": true
+    },
+    "self_collision_check": {
+      "default": true,
+      "value": false
+    },
+    "self_collision_opt": {
+      "default": true,
+      "value": false
+    },
+    "grad_trajopt_iters": {
+      "default": null,
+      "value": 350
+    },
+    "trajopt_seed_ratio": {
+      "default": { "linear": 1.0, "bias": 0.0 },
+      "value": null
+    },
+    "ik_opt_iters": {
+      "default": null,
+      "value": null
+    },
+    "ik_particle_opt": {
+      "default": true,
+      "value": null
+    },
+    "collision_checker_type": {
+      "default": "MESH",
+      "value": null
+    },
+    "sync_cuda_time": {
+      "default": null,
+      "value": null
+    },
+    "trajopt_particle_opt": {
+      "default": true,
+      "value": null
+    },
+    "traj_evaluator_config": {
+      "default": null,
+      "value": null
+    },
+    "traj_evaluator": {
+      "default": null,
+      "value": null
+    },
+    "minimize_jerk": {
+      "default": true,
+      "value": true
+    },
+    "filter_robot_command": {
+      "default": false,
+      "value": false
+    },
+    "use_gradient_descent": {
+      "default": false,
+      "value": null
+    },
+    "collision_cache": {
+      "default": null,
+      "value": { "obb": 10, "mesh": 10 }
+    },
+    "n_collision_envs": {
+      "default": null,
+      "value": null
+    },
+    "ee_link_name": {
+      "default": null,
+      "value": null
+    },
+    "use_es_ik": {
+      "default": null,
+      "value": null
+    },
+    "use_es_trajopt": {
+      "default": null,
+      "value": null
+    },
+    "es_ik_learning_rate": {
+      "default": 1.0,
+      "value": null
+    },
+    "es_trajopt_learning_rate": {
+      "default": 1.0,
+      "value": null
+    },
+    "use_ik_fixed_samples": {
+      "default": null,
+      "value": null
+    },
+    "use_trajopt_fixed_samples": {
+      "default": null,
+      "value": null
+    },
+    "evaluate_interpolated_trajectory": {
+      "default": true,
+      "value": null
+    },
+    "partial_ik_iters": {
+      "default": 2,
+      "value": null
+    },
+    "fixed_iters_trajopt": {
+      "default": null,
+      "value": null
+    },
+    "store_ik_debug": {
+      "default": false,
+      "value": null
+    },
+    "store_trajopt_debug": {
+      "default": false,
+      "value": null
+    },
+    "graph_trajopt_iters": {
+      "default": null,
+      "value": 400
+    },
+    "collision_max_outside_distance": {
+      "default": null,
+      "value": null
+    },
+    "collision_activation_distance": {
+      "default": null,
+      "value": 0.02
+    },
+    "trajopt_dt": {
+      "default": null,
+      "value": 0.15
+    },
+    "js_trajopt_dt": {
+      "default": null,
+      "value": null
+    },
+    "js_trajopt_tsteps": {
+      "default": null,
+      "value": null
+    },
+    "trim_steps": {
+      "default": null,
+      "value": null
+    },
+    "store_debug_in_result": {
+      "default": false,
+      "value": null
+    },
+    "finetune_trajopt_iters": {
+      "default": null,
+      "value": 300
+    },
+    "smooth_weight": {
+      "default": null,
+      "value": null
+    },
+    "finetune_smooth_weight": {
+      "default": null,
+      "value": null
+    },
+    "state_finite_difference_mode": {
+      "default": null,
+      "value": null
+    },
+    "finetune_dt_scale": {
+      "default": 0.9,
+      "value": null
+    },
+    "minimum_trajectory_dt": {
+      "default": null,
+      "value": null
+    },
+    "maximum_trajectory_time": {
+      "default": null,
+      "value": null
+    },
+    "maximum_trajectory_dt": {
+      "default": null,
+      "value": null
+    },
+    "velocity_scale": {
+      "default": null,
+      "value": null
+    },
+    "acceleration_scale": {
+      "default": null,
+      "value": null
+    },
+    "jerk_scale": {
+      "default": null,
+      "value": null
+    },
+    "optimize_dt": {
+      "default": true,
+      "value": true
+    },
+    "project_pose_to_goal_frame": {
+      "default": true,
+      "value": null
+    },
+    "ik_seed": {
+      "default": 1531,
+      "value": null
+    },
+    "graph_seed": {
+      "default": 1531,
+      "value": null
+    },
+    "high_precision": {
+      "default": false,
+      "value": null
+    },
+    "use_cuda_graph_trajopt_metrics": {
+      "default": false,
+      "value": null
+    },
+    "trajopt_fix_terminal_action": {
+      "default": true,
+      "value": null
+    },
+    "trajopt_js_fix_terminal_action": {
+      "default": true,
+      "value": null
+    }
+  },
+  "plan_config": {
+    "enable_graph": {
+      "default": false,
+      "value": true
+    },
+    "enable_opt": {
+      "default": true,
+      "value": true
+    },
+    "use_nn_ik_seed": {
+      "default": false,
+      "value": false
+    },
+    "need_graph_success": {
+      "default": false,
+      "value": false
+    },
+    "max_attempts": {
+      "default": 60,
+      "value": 20
+    },
+    "timeout": {
+      "default": 10.0,
+      "value": 15.0
+    },
+    "enable_graph_attempt": {
+      "default": 3,
+      "value": 8
+    },
+    "disable_graph_attempt": {
+      "default": null,
+      "value": null
+    },
+    "ik_fail_return": {
+      "default": null,
+      "value": null
+    },
+    "partial_ik_opt": {
+      "default": false,
+      "value": false
+    },
+    "num_ik_seeds": {
+      "default": null,
+      "value": null
+    },
+    "num_graph_seeds": {
+      "default": null,
+      "value": null
+    },
+    "num_trajopt_seeds": {
+      "default": null,
+      "value": null
+    },
+    "success_ratio": {
+      "default": 1.0,
+      "value": null
+    },
+    "fail_on_invalid_query": {
+      "default": true,
+      "value": null
+    },
+    "use_start_state_as_retract": {
+      "default": true,
+      "value": null
+    },
+    "pose_cost_metric": {
+      "default": null,
+      "value": null
+    },
+    "enable_finetune_trajopt": {
+      "default": true,
+      "value": true
+    },
+    "parallel_finetune": {
+      "default": true,
+      "value": null
+    },
+    "finetune_dt_scale": {
+      "default": 0.85,
+      "value": null
+    },
+    "finetune_attempts": {
+      "default": 5,
+      "value": null
+    },
+    "finetune_dt_decay": {
+      "default": 1.025,
+      "value": null
+    },
+    "time_dilation_factor": {
+      "default": null,
+      "value": null
+    },
+    "check_start_validity": {
+      "default": true,
+      "value": null
+    },
+    "finetune_js_dt_scale": {
+      "default": 1.1,
+      "value": null
+    }
+  },
+  "visualization": {
+    "n_frames": {
+      "default": 5,
+      "value": 5
+    }
+  }
+}
