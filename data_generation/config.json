@@ -1,4 +1,38 @@
 {
+  "data_storage": {
+    "enabled": {
+      "default": true,
+      "value": true
+    },
+    "hdf5_filename": {
+      "default": "trajectories.h5",
+      "value": "trajectories.h5"
+    },
+    "flush_interval": {
+      "default": 1,
+      "value": 5
+    },
+    "debug_images_dir": {
+      "default": "debug_images",
+      "value": "debug_images"
+    },
+    "image_format": {
+      "default": "png",
+      "value": "png"
+    },
+    "image_dpi": {
+      "default": 100,
+      "value": 150
+    },
+    "compression": {
+      "default": "gzip",
+      "value": "gzip"
+    },
+    "compression_opts": {
+      "default": 4,
+      "value": 4
+    }
+  },
   "general": {
     "device": {
       "default": "cuda:0",
@@ -16,7 +50,7 @@
   "generation": {
     "num_trajectories": {
       "default": 1,
-      "value": 10
+      "value": 5
     },
     "max_attempts_per_trajectory": {
       "default": 5,

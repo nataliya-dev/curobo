@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from mpl_toolkits.mplot3d import Axes3D
+import h5py
 
 # CuRobo
 from curobo.geom.types import Sphere, WorldConfig
@@ -113,65 +114,424 @@ class ObstacleGenerator:
         world_config = WorldConfig(sphere=sphere_list)
 
         # Convert world config to mesh representation
+        # TODO(nn) confirm this keeps our spheres as ususal, had problems with this in the past
         world_config = WorldConfig.create_mesh_world(world_config)
 
         return obstacles, world_config
 
 
 # ============================================================================
-# DATA STORAGE (PLACEHOLDER)
+# DATA STORAGE
+# ============================================================================
+# EXAMPLE USAGE FOR LOADING DATA FOR TRAINING:
+# import h5py
+# import numpy as np
+
+# # Load all trajectories at once
+# with h5py.File('data/trajectories.h5', 'r') as f:
+#     starts = []
+#     goals = []
+#     plans = []
+#     obstacles_list = []
+
+#     for traj_name in f.keys():
+#         traj = f[traj_name]
+#         starts.append(traj['start'][:])
+#         goals.append(traj['goal'][:])
+#         plans.append(traj['interpolated_plan'][:])
+#         obstacles_list.append({
+#             'positions': traj['obstacle_positions'][:],
+#             'radii': traj['obstacle_radii'][:]
+#         })
+
+#     # Convert to arrays for batch training
+#     starts = np.array(starts)      # [N, 3]
+#     goals = np.array(goals)        # [N, 3]
+#     # plans need padding if different lengths
+# ============================================================================
+
+
+# ============================================================================
+# DATA STORAGE
 # ============================================================================
 
 class DataStorage:
     """
-    Placeholder class for storing trajectory data.
-    Will be implemented in the next step.
+    Store trajectory data in HDF5 format and save visualization images.
+
+    WHAT WE SAVE:
+    =============
+    For each trajectory, we save:
+
+    1. JOINT CONFIGURATIONS (numpy arrays):
+       - start: [dof] - Starting joint angles
+       - goal: [dof] - Goal joint angles
+       - optimized_plan: [n_waypoints, dof] - Optimized trajectory waypoints
+       - interpolated_plan: [n_steps, dof] - Full interpolated trajectory
+
+    2. TIMING DATA (numpy arrays):
+       - optimized_dt: [n_waypoints-1] - Time between optimized waypoints
+
+    3. OBSTACLE DATA (numpy arrays):
+       - obstacle_positions: [n_obstacles, 3] - XYZ positions of obstacles
+       - obstacle_radii: [n_obstacles] - Radius of each obstacle sphere
+
+    4. METADATA (HDF5 attributes - scalars):
+       - trajectory_id, num_obstacles, solve_time, motion_time,
+       - interpolation_dt, plan lengths, timestamp
+
+    FILE VERSIONING:
+    ===============
+    If trajectories.h5 exists, creates trajectories_001.h5, trajectories_002.h5, etc.
+    This prevents accidental data loss from overwriting existing files.
     """
 
-    def __init__(self, output_directory: str):
+    def __init__(self, output_directory: str, storage_config: Dict[str, Any],
+                 enabled: bool = True):
         """
         Initialize data storage.
 
         Args:
             output_directory: Base directory for storing data
+            storage_config: Configuration for data storage
+            enabled: If False, skip all saving operations (for testing)
         """
+        self.enabled = enabled
+
+        if not self.enabled:
+            print("DataStorage initialized in DISABLED mode (no saving)")
+            return
+
         self.output_directory = Path(output_directory)
-        self.trajectories_dir = self.output_directory / "trajectories"
-        self.images_dir = self.output_directory / "images"
+        self.storage_config = storage_config
 
-        print(f"DataStorage initialized with output directory: {self.output_directory}")
-        print("  (Data saving not yet implemented)")
+        # Create directory structure
+        self.output_directory.mkdir(parents=True, exist_ok=True)
 
-    def save_trajectory(self, trajectory_id: int, trajectory_data: Dict[str, Any]) -> None:
+        # Get base filename and find next available version
+        base_filename = storage_config['hdf5_filename']
+        self.hdf5_path = self._get_versioned_filepath(base_filename)
+
+        # Images directory
+        self.images_dir = self.output_directory / storage_config['debug_images_dir']
+        self.images_dir.mkdir(parents=True, exist_ok=True)
+
+        # Image settings
+        self.image_format = storage_config['image_format']
+        self.image_dpi = storage_config['image_dpi']
+
+        # HDF5 compression settings
+        self.compression = storage_config['compression']
+        self.compression_opts = storage_config['compression_opts']
+
+        # Flush settings
+        self.flush_interval = storage_config.get('flush_interval', 1)
+        self.trajectories_since_flush = 0
+
+        # HDF5 file handle (initially None, opened with open())
+        self.hdf5_file = None
+
+        print(f"DataStorage initialized (ENABLED):")
+        print(f"  Output directory: {self.output_directory}")
+        print(f"  HDF5 file: {self.hdf5_path}")
+        print(f"  Images directory: {self.images_dir}")
+        print(f"  Flush interval: every {self.flush_interval} trajectory(ies)")
+
+    def _get_versioned_filepath(self, base_filename: str) -> Path:
         """
-        Placeholder for saving trajectory data.
+        Get next available versioned filepath to avoid overwriting.
+
+        Args:
+            base_filename: Base filename (e.g., "trajectories.h5")
+
+        Returns:
+            Path to versioned file (e.g., "trajectories_001.h5" if base exists)
+        """
+        base_path = self.output_directory / base_filename
+
+        # If file doesn't exist, use base name
+        if not base_path.exists():
+            print(f"  Using new file: {base_filename}")
+            return base_path
+
+        # File exists - find next available version
+        stem = base_path.stem  # "trajectories"
+        suffix = base_path.suffix  # ".h5"
+
+        version = 1
+        while True:
+            versioned_path = self.output_directory / f"{stem}_{version:03d}{suffix}"
+            if not versioned_path.exists():
+                print(f"  File {base_filename} exists - using versioned file: {versioned_path.name}")
+                return versioned_path
+            version += 1
+
+            # Safety check to prevent infinite loop
+            if version > 9999:
+                raise RuntimeError(f"Too many versions of {base_filename} (>9999)!")
+
+    def open(self) -> None:
+        """Open HDF5 file for batch writing."""
+        if not self.enabled:
+            print("[DataStorage] Skipping open (disabled)")
+            return
+
+        if self.hdf5_file is not None:
+            print("[DataStorage] WARNING: File already open, skipping open()")
+            return
+
+        try:
+            print(f"[DataStorage] Opening HDF5 file: {self.hdf5_path}")
+            self.hdf5_file = h5py.File(self.hdf5_path, 'w')
+
+            # Store global metadata
+            self.hdf5_file.attrs['created_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            self.hdf5_file.attrs['version'] = '1.0'
+            self.hdf5_file.attrs['flush_interval'] = self.flush_interval
+
+            self.trajectories_since_flush = 0
+            print(f"[DataStorage] ✓ HDF5 file opened successfully")
+
+        except Exception as e:
+            print(f"[DataStorage] ✗ ERROR opening HDF5 file!")
+            print(f"  Error: {e}")
+            raise
+
+    def close(self) -> None:
+        """Close HDF5 file and flush any remaining data."""
+        if not self.enabled:
+            print("[DataStorage] Skipping close (disabled)")
+            return
+
+        if self.hdf5_file is None:
+            print("[DataStorage] WARNING: File not open, skipping close()")
+            return
+
+        try:
+            print(f"[DataStorage] Closing HDF5 file...")
+
+            # Final flush
+            self.hdf5_file.flush()
+            print(f"  ✓ Final flush complete")
+
+            # Update metadata
+            self.hdf5_file.attrs['closed_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            total_trajectories = len(self.hdf5_file.keys())
+            self.hdf5_file.attrs['total_trajectories'] = total_trajectories
+            print(f"  ✓ Saved {total_trajectories} trajectories")
+
+            # Close file
+            self.hdf5_file.close()
+            self.hdf5_file = None
+            print(f"[DataStorage] ✓ HDF5 file closed: {self.hdf5_path}")
+
+        except Exception as e:
+            print(f"[DataStorage] ✗ ERROR closing HDF5 file!")
+            print(f"  Error: {e}")
+            # Still set to None to avoid re-closing
+            self.hdf5_file = None
+            raise
+
+    def _save_array_dataset(self, group, name: str, data: np.ndarray,
+                            verbose: bool = False) -> None:
+        """
+        Helper to save array dataset with proper compression handling.
+
+        Args:
+            group: HDF5 group to save to
+            name: Dataset name
+            data: Numpy array to save
+            verbose: If True, print debug information
+        """
+        # Convert to numpy array if needed
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+
+        # Only apply compression to non-scalar datasets
+        if data.shape == () or data.size == 1:
+            # Scalar or single-element - no compression
+            group.create_dataset(name, data=data)
+            if verbose:
+                print(f"    [DEBUG] Saved scalar dataset '{name}': shape={data.shape}")
+        else:
+            # Array - apply compression
+            group.create_dataset(
+                name,
+                data=data,
+                compression=self.compression,
+                compression_opts=self.compression_opts
+            )
+            if verbose:
+                print(f"    [DEBUG] Saved compressed dataset '{name}': "
+                      f"shape={data.shape}, size={data.nbytes/1024:.2f} KB")
+
+    def save_trajectory(self, trajectory_id: int, trajectory_data: Dict[str, Any],
+                        verbose: bool = False) -> None:
+        """
+        Save trajectory data to HDF5 file.
 
         Args:
             trajectory_id: Unique identifier for the trajectory
             trajectory_data: Dictionary containing trajectory information
+            verbose: If True, print detailed debug information
         """
-        print(f"  [PLACEHOLDER] Would save trajectory {trajectory_id}")
-        # TODO: Implement in next step
-        pass
+        if not self.enabled:
+            if verbose:
+                print(f"  [SKIP] Saving disabled - would save trajectory {trajectory_id}")
+            return
+
+        if self.hdf5_file is None:
+            raise RuntimeError("HDF5 file is not open! Call open() before saving.")
+
+        group_name = f"trajectory_{trajectory_id:06d}"
+
+        try:
+            if verbose:
+                print(f"  Saving to HDF5 group: {group_name}")
+
+            # Create group for this trajectory
+            if group_name in self.hdf5_file:
+                if verbose:
+                    print(f"    [DEBUG] Overwriting existing group")
+                del self.hdf5_file[group_name]
+
+            grp = self.hdf5_file.create_group(group_name)
+
+            # Save trajectory arrays
+            if verbose:
+                print(f"    [DEBUG] Saving trajectory arrays...")
+
+            self._save_array_dataset(grp, 'start', trajectory_data['start'], verbose)
+            self._save_array_dataset(grp, 'goal', trajectory_data['goal'], verbose)
+            self._save_array_dataset(grp, 'optimized_plan',
+                                     trajectory_data['optimized_plan'], verbose)
+            self._save_array_dataset(grp, 'optimized_dt',
+                                     trajectory_data['optimized_dt'], verbose)
+            self._save_array_dataset(grp, 'interpolated_plan',
+                                     trajectory_data['interpolated_plan'], verbose)
+
+            # Save obstacle data
+            if verbose:
+                print(f"    [DEBUG] Saving obstacle data...")
+
+            obstacles = trajectory_data['obstacles']
+            if len(obstacles) > 0:
+                obstacle_positions = np.array([obs['position'] for obs in obstacles])
+                obstacle_radii = np.array([obs['radius'] for obs in obstacles])
+            else:
+                # Empty arrays if no obstacles
+                obstacle_positions = np.empty((0, 3))
+                obstacle_radii = np.empty(0)
+
+            self._save_array_dataset(grp, 'obstacle_positions',
+                                     obstacle_positions, verbose)
+            self._save_array_dataset(grp, 'obstacle_radii',
+                                     obstacle_radii, verbose)
+
+            # Save metadata as attributes
+            if verbose:
+                print(f"    [DEBUG] Saving metadata attributes...")
+
+            grp.attrs['trajectory_id'] = trajectory_id
+            grp.attrs['num_obstacles'] = trajectory_data['num_obstacles']
+            grp.attrs['solve_time'] = float(trajectory_data['solve_time'])
+
+            # Handle motion_time - might be scalar or array
+            motion_time = trajectory_data['motion_time']
+            if isinstance(motion_time, np.ndarray):
+                grp.attrs['motion_time'] = float(motion_time.item())
+            else:
+                grp.attrs['motion_time'] = float(motion_time)
+
+            grp.attrs['interpolation_dt'] = float(trajectory_data['interpolation_dt'])
+            grp.attrs['optimized_plan_length'] = len(trajectory_data['optimized_plan'])
+            grp.attrs['interpolated_plan_length'] = len(trajectory_data['interpolated_plan'])
+            grp.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
+
+            # Periodic flush for data safety
+            self.trajectories_since_flush += 1
+            if self.trajectories_since_flush >= self.flush_interval:
+                self.hdf5_file.flush()
+                self.trajectories_since_flush = 0
+                print(
+                    f"  [FLUSH] Data committed to disk (every {self.flush_interval} trajectories)")
+
+            if not verbose:
+                print(f"  ✓ Saved trajectory data to HDF5: {group_name}")
+
+        except Exception as e:
+            print(f"  ✗ ERROR saving trajectory {trajectory_id} to HDF5!")
+            print(f"    Error type: {type(e).__name__}")
+            print(f"    Error message: {e}")
+            print(f"    Trajectory data keys: {trajectory_data.keys()}")
+            print(f"    Data shapes:")
+            for key, val in trajectory_data.items():
+                if isinstance(val, np.ndarray):
+                    print(f"      {key}: {val.shape} {val.dtype}")
+                elif key == 'obstacles':
+                    print(f"      obstacles: {len(val)} obstacles")
+                else:
+                    print(f"      {key}: {type(val)}")
+
+            # Emergency flush to try to save what we can
+            try:
+                print(f"  [EMERGENCY FLUSH] Attempting to save data before raising error...")
+                self.hdf5_file.flush()
+                print(f"  ✓ Emergency flush successful")
+            except Exception as flush_error:
+                print(f"  ✗ Emergency flush failed: {flush_error}")
+
+            raise
 
     def save_image(self, trajectory_id: int, image_type: str, figure) -> None:
         """
-        Placeholder for saving trajectory visualization images.
+        Save trajectory visualization image.
 
         Args:
             trajectory_id: Unique identifier for the trajectory
             image_type: Type of image ('start_goal' or 'trajectory')
             figure: Matplotlib figure object
         """
-        print(f"  [PLACEHOLDER] Would save {image_type} image for trajectory {trajectory_id}")
-        # TODO: Implement in next step
-        plt.close(figure)
-        pass
+        if not self.enabled:
+            print(f"  [SKIP] Saving disabled - would save {image_type} image")
+            plt.close(figure)
+            return
+
+        filename = f"traj_{trajectory_id:06d}_{image_type}.{self.image_format}"
+        filepath = self.images_dir / filename
+
+        try:
+            figure.savefig(filepath, dpi=self.image_dpi, bbox_inches='tight')
+            print(f"  ✓ Saved {image_type} image: {filename}")
+
+        except Exception as e:
+            print(f"  ✗ ERROR saving image {filename}!")
+            print(f"    Error: {e}")
+            raise
+        finally:
+            plt.close(figure)
+
+    def __enter__(self):
+        """Context manager entry - opens file."""
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - closes file even on error."""
+        if exc_type is not None:
+            print(f"\n[DataStorage] Exception occurred during context: {exc_type.__name__}")
+            print(f"  Closing file to preserve data...")
+
+        self.close()
+
+        # Don't suppress the exception
+        return False
 
 
 # ============================================================================
 # TRAJECTORY GENERATOR
 # ============================================================================
+
 
 class TrajectoryGenerator:
     """Generate trajectories using MotionGen for a robot arm."""
@@ -628,7 +988,12 @@ class TrajectoryDatasetGenerator:
         self.trajectory_generator = TrajectoryGenerator(config)
 
         # Initialize data storage
-        self.data_storage = DataStorage(config['general']['output_directory'])
+
+        self.data_storage = DataStorage(
+            config['general']['output_directory'],
+            config['data_storage'],
+            enabled=config['data_storage']['enabled']  # Add this parameter
+        )
 
         print()
 
@@ -659,7 +1024,8 @@ class TrajectoryDatasetGenerator:
                 print(f"    Created {len(obstacles)} obstacles")
 
                 # Update world
-                self.trajectory_generator.reset_graph_planner()
+                # TODO(nn) verify this resetting, why is planning taking too long, should be miiliseonds
+                # self.trajectory_generator.reset_graph_planner()
                 self.trajectory_generator.update_world(world_config)
 
             # Sample start and goal states
@@ -749,17 +1115,41 @@ class TrajectoryDatasetGenerator:
         successful = 0
         failed = 0
 
-        for i in range(num_trajectories):
-            success = self.generate_single_trajectory(i)
+        # Open HDF5 file once for all trajectories
+        self.data_storage.open()
 
-            if success:
-                successful += 1
-            else:
-                failed += 1
+        try:
+            for i in range(num_trajectories):
+                success = self.generate_single_trajectory(i)
+
+                if success:
+                    successful += 1
+                else:
+                    failed += 1
+
+        except KeyboardInterrupt:
+            print("\n" + "=" * 70)
+            print("INTERRUPTED BY USER (Ctrl+C)")
+            print("=" * 70)
+            print(f"Saving {successful} successful trajectories before exit...")
+            # File will be closed in finally block
+
+        except Exception as e:
+            print("\n" + "=" * 70)
+            print("UNEXPECTED ERROR DURING GENERATION")
+            print("=" * 70)
+            print(f"Error: {e}")
+            print(f"Saving {successful} successful trajectories before exit...")
+            # File will be closed in finally block
+            raise
+
+        finally:
+            # Always close the file
+            self.data_storage.close()
 
         total_time = time.time() - start_time
 
-        # Print summary
+        # Print summary (rest stays the same)
         print(f"\n{'='*70}")
         print("GENERATION SUMMARY")
         print(f"{'='*70}")
